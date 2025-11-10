@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"math/bits"
-	"net/http"
 	"sync"
 	"time"
+
+	"slbwc/internal/overlay"
 )
 
 // RPCClient defines the operations required to communicate with remote Chord nodes.
@@ -71,13 +72,13 @@ func NewNode(self RemoteNode, rpc RPCClient, cfg Config) *Node {
 		successorList[i] = self
 	}
 	return &Node{
-		self:       self,
-		successor:  self,
+		self:        self,
+		successor:   self,
 		predecessor: RemoteNode{},
-		finger:     fingers,
-		successors: successorList,
-		cfg:        cfg,
-		rpc:        rpc,
+		finger:      fingers,
+		successors:  successorList,
+		cfg:         cfg,
+		rpc:         rpc,
 	}
 }
 
@@ -341,9 +342,5 @@ func HopEstimate() int {
 
 // MustParseRemote constructs RemoteNode and panics on invalid address.
 func MustParseRemote(id Identifier, address string) RemoteNode {
-	if _, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/", address), nil); err != nil {
-		panic(fmt.Sprintf("invalid address %s: %v", address, err))
-	}
-	return RemoteNode{ID: id, Address: address}
+	return overlay.MustParseRemote(id, address)
 }
-

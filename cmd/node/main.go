@@ -33,6 +33,7 @@ func main() {
 		address       = flag.String("address", "127.0.0.1:8080", "Public address (host:port) advertised to peers")
 		bind          = flag.String("bind", "", "Local bind address (defaults to address)")
 		id            = flag.String("id", "", "Optional node ID seed")
+		overlay       = flag.String("overlay", string(node.OverlayChord), "Overlay routing algorithm: chord or koorde")
 		mode          = flag.String("mode", string(node.ProxyMode), "Routing mode: proxy or redirect")
 		replicas      = flag.Int("replicas", 3, "Replication factor")
 		cacheCap      = flag.Int("cache-capacity", 512, "Cache capacity (entries)")
@@ -52,6 +53,7 @@ func main() {
 		Address:            *address,
 		BindAddr:           *bind,
 		Seeds:              append([]string(nil), seeds...),
+		Overlay:            node.Overlay(*overlay),
 		Mode:               node.Mode(*mode),
 		ReplicationFactor:  *replicas,
 		CacheCapacity:      *cacheCap,
@@ -87,4 +89,3 @@ func main() {
 	logger.Info("node stopped gracefully")
 	fmt.Println("bye")
 }
-

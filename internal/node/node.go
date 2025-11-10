@@ -16,8 +16,10 @@ import (
 
 	"slbwc/internal/cache"
 	"slbwc/internal/chord"
+	"slbwc/internal/koorde"
 	"slbwc/internal/membership"
 	"slbwc/internal/metrics"
+	"slbwc/internal/overlay"
 )
 
 const (
@@ -29,16 +31,16 @@ const (
 type Node struct {
 	cfg Config
 
-	self         chord.RemoteNode
-	chordNode    *chord.Node
-	chordCancel  context.CancelFunc
-	membership   *membership.Manager
-	cache        *cache.LRU
-	httpServer   *http.Server
-	logger       *slog.Logger
-	mode         Mode
-	replicas     int
-	originClient *http.Client
+	self          overlay.RemoteNode
+	routing       overlay.Routing
+	overlayCancel context.CancelFunc
+	membership    *membership.Manager
+	cache         *cache.LRU
+	httpServer    *http.Server
+	logger        *slog.Logger
+	mode          Mode
+	replicas      int
+	originClient  *http.Client
 
 	mu        sync.RWMutex
 	started   bool
@@ -59,15 +61,24 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*Node, error) {
 	if idKey == "" {
 		idKey = cfg.Address
 	}
-	self := chord.RemoteNode{
-		ID:      chord.HashKey(idKey),
+	self := overlay.RemoteNode{
+		ID:      overlay.HashKey(idKey),
 		Address: cfg.Address,
 	}
-	chordCfg := chord.DefaultConfig()
-	chordCfg.Logger = logger.With("component", "chord")
 
-	rpcClient := chord.NewHTTPClient(3 * time.Second)
-	chordNode := chord.NewNode(self, rpcClient, chordCfg)
+	var routing overlay.Routing
+	switch cfg.Overlay {
+	case OverlayKoorde:
+		koordeCfg := koorde.DefaultConfig()
+		koordeCfg.Logger = logger.With("component", "koorde")
+		rpcClient := koorde.NewHTTPClient(3 * time.Second)
+		routing = koorde.NewNode(self, rpcClient, koordeCfg)
+	default:
+		chordCfg := chord.DefaultConfig()
+		chordCfg.Logger = logger.With("component", "chord")
+		rpcClient := chord.NewHTTPClient(3 * time.Second)
+		routing = chord.NewNode(self, rpcClient, chordCfg)
+	}
 
 	memCfg := membership.DefaultConfig()
 	memCfg.Logger = logger.With("component", "membership")
@@ -84,17 +95,17 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*Node, error) {
 	n := &Node{
 		cfg:          cfg,
 		self:         self,
-		chordNode:    chordNode,
+		routing:      routing,
 		membership:   membershipMgr,
 		cache:        cacheStore,
-		logger:       logger.With("component", "node", "address", cfg.Address),
+		logger:       logger.With("component", "node", "address", cfg.Address, "overlay", string(cfg.Overlay)),
 		mode:         cfg.Mode,
 		replicas:     cfg.ReplicationFactor,
 		originClient: originClient,
 	}
 
 	mux := http.NewServeMux()
-	chord.RegisterHandlers(mux, chordNode)
+	routing.RegisterHandlers(mux)
 	membership.RegisterHandlers(mux, membershipMgr)
 	mux.HandleFunc("/cache", n.handleCache)
 	mux.HandleFunc(internalReplicationPath, n.handleReplication)
@@ -118,7 +129,7 @@ func (n *Node) Start(ctx context.Context) error {
 	var err error
 	n.startOnce.Do(func() {
 		n.membership.Start(ctx)
-		n.chordCancel = n.chordNode.RunBackground(ctx)
+		n.overlayCancel = n.routing.RunBackground(ctx)
 		err = n.bootstrap(ctx)
 		if err != nil {
 			return
@@ -139,8 +150,8 @@ func (n *Node) Start(ctx context.Context) error {
 func (n *Node) Stop(ctx context.Context) error {
 	var err error
 	n.stopOnce.Do(func() {
-		if n.chordCancel != nil {
-			n.chordCancel()
+		if n.overlayCancel != nil {
+			n.overlayCancel()
 		}
 		err = n.httpServer.Shutdown(ctx)
 	})
@@ -150,18 +161,18 @@ func (n *Node) Stop(ctx context.Context) error {
 func (n *Node) bootstrap(ctx context.Context) error {
 	if len(n.cfg.Seeds) == 0 {
 		n.logger.Info("starting new ring")
-		return n.chordNode.Join(ctx, chord.RemoteNode{})
+		return n.routing.Join(ctx, overlay.RemoteNode{})
 	}
 	for _, seedAddr := range n.cfg.Seeds {
 		if seedAddr == "" || seedAddr == n.self.Address {
 			continue
 		}
-		seed := chord.RemoteNode{
-			ID:      chord.HashKey(seedAddr),
+		seed := overlay.RemoteNode{
+			ID:      overlay.HashKey(seedAddr),
 			Address: seedAddr,
 		}
 		ctxJoin, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err := n.chordNode.Join(ctxJoin, seed)
+		err := n.routing.Join(ctxJoin, seed)
 		cancel()
 		if err != nil {
 			n.logger.Warn("failed to join seed", slog.String("seed", seedAddr), slog.String("err", err.Error()))
@@ -172,7 +183,7 @@ func (n *Node) bootstrap(ctx context.Context) error {
 		return nil
 	}
 	n.logger.Info("no reachable seeds, creating new ring")
-	return n.chordNode.Join(ctx, chord.RemoteNode{})
+	return n.routing.Join(ctx, overlay.RemoteNode{})
 }
 
 func (n *Node) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -192,8 +203,8 @@ func (n *Node) handleCache(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	key := strings.TrimSpace(qURL)
-	id := chord.HashKey(key)
-	owner, hops, err := n.chordNode.FindSuccessor(ctx, id)
+	id := overlay.HashKey(key)
+	owner, hops, err := n.routing.FindSuccessor(ctx, id)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("lookup failed: %v", err), http.StatusServiceUnavailable)
 		return
@@ -320,7 +331,7 @@ func (n *Node) replicateAsync(entry cache.Entry) {
 	if n.replicas <= 1 {
 		return
 	}
-	targets := n.chordNode.SuccessorList()
+	targets := n.routing.SuccessorList()
 	if len(targets) == 0 {
 		return
 	}
@@ -334,7 +345,7 @@ func (n *Node) replicateAsync(entry cache.Entry) {
 	go n.replicate(entry, targets)
 }
 
-func (n *Node) replicate(entry cache.Entry, targets []chord.RemoteNode) {
+func (n *Node) replicate(entry cache.Entry, targets []overlay.RemoteNode) {
 	payload := struct {
 		Key         string    `json:"key"`
 		ContentType string    `json:"content_type"`
@@ -410,7 +421,7 @@ func (n *Node) handleReplication(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (n *Node) proxyToOwner(w http.ResponseWriter, r *http.Request, owner chord.RemoteNode, key string, start time.Time) {
+func (n *Node) proxyToOwner(w http.ResponseWriter, r *http.Request, owner overlay.RemoteNode, key string, start time.Time) {
 	reqURL := fmt.Sprintf("http://%s/cache?url=%s", owner.Address, url.QueryEscape(key))
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, reqURL, nil)
 	if err != nil {
@@ -496,8 +507,8 @@ func clampDuration(val, min, max time.Duration) time.Duration {
 	return val
 }
 
-func filterSelf(nodes []chord.RemoteNode, selfAddr string) []chord.RemoteNode {
-	out := make([]chord.RemoteNode, 0, len(nodes))
+func filterSelf(nodes []overlay.RemoteNode, selfAddr string) []overlay.RemoteNode {
+	out := make([]overlay.RemoteNode, 0, len(nodes))
 	for _, n := range nodes {
 		if n.Address == "" || n.Address == selfAddr {
 			continue
@@ -543,7 +554,7 @@ func (r *statusRecorder) WriteHeader(code int) {
 }
 
 // CurrentMembership returns alive members.
-func (n *Node) CurrentMembership() []chord.RemoteNode {
+func (n *Node) CurrentMembership() []overlay.RemoteNode {
 	return n.membership.AliveMembers()
 }
 
@@ -552,9 +563,9 @@ func (n *Node) Address() string {
 	return n.self.Address
 }
 
-// Overlay returns overlay node.
-func (n *Node) Overlay() *chord.Node {
-	return n.chordNode
+// Overlay returns the routing implementation.
+func (n *Node) Overlay() overlay.Routing {
+	return n.routing
 }
 
 // Cache returns cache reference.
@@ -571,4 +582,3 @@ func (n *Node) OriginTimeout() time.Duration {
 func (n *Node) DefaultTTL() time.Duration {
 	return n.cfg.DefaultTTL
 }
-

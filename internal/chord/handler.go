@@ -94,3 +94,7 @@ func RegisterHandlers(mux *http.ServeMux, node *Node) {
 	})
 }
 
+// RegisterHandlers attaches the Chord HTTP handlers for the node (implements overlay.Routing support).
+func (n *Node) RegisterHandlers(mux *http.ServeMux) {
+	RegisterHandlers(mux, n)
+}

@@ -1,51 +1,16 @@
 package chord
 
-import (
-	"crypto/sha1"
-	"encoding/binary"
-	"fmt"
-)
+import "slbwc/internal/overlay"
 
 const (
-	// IdentifierBits is the number of bits for the Chord ring.
-	IdentifierBits = 64
-	// identifierBytes is derived from IdentifierBits.
-	identifierBytes = IdentifierBits / 8
+	// IdentifierBits is maintained for backward compatibility.
+	IdentifierBits = overlay.IdentifierBits
 )
 
-// Identifier represents a point on the ring.
-type Identifier uint64
+// Identifier aliases overlay.Identifier for existing code.
+type Identifier = overlay.Identifier
 
-// HashKey hashes an arbitrary string key into a ring identifier.
+// HashKey proxies to overlay.HashKey.
 func HashKey(key string) Identifier {
-	sum := sha1.Sum([]byte(key))
-	return Identifier(binary.BigEndian.Uint64(sum[:identifierBytes]))
+	return overlay.HashKey(key)
 }
-
-// String returns the hex formatted identifier.
-func (id Identifier) String() string {
-	return fmt.Sprintf("%016x", uint64(id))
-}
-
-// Between returns true when id is strictly between start (exclusive) and end (inclusive) on the ring.
-func (id Identifier) Between(start, end Identifier) bool {
-	if start == end {
-		return id != start
-	}
-	if start < end {
-		return id > start && id <= end
-	}
-	return id > start || id <= end
-}
-
-// BetweenLeftInclusive returns true when id is between start (inclusive) and end (exclusive).
-func (id Identifier) BetweenLeftInclusive(start, end Identifier) bool {
-	if start == end {
-		return id != end
-	}
-	if start < end {
-		return id >= start && id < end
-	}
-	return id >= start || id < end
-}
-

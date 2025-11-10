@@ -12,7 +12,7 @@ import (
 
 	"log/slog"
 
-	"slbwc/internal/chord"
+	"slbwc/internal/overlay"
 )
 
 // State defines membership state.
@@ -29,11 +29,11 @@ const (
 
 // Member holds membership metadata.
 type Member struct {
-	ID          chord.Identifier `json:"id"`
-	Address     string           `json:"address"`
-	State       State            `json:"state"`
-	Incarnation uint64           `json:"incarnation"`
-	UpdatedAt   time.Time        `json:"updated_at"`
+	ID          overlay.Identifier `json:"id"`
+	Address     string             `json:"address"`
+	State       State              `json:"state"`
+	Incarnation uint64             `json:"incarnation"`
+	UpdatedAt   time.Time          `json:"updated_at"`
 }
 
 // Config for Manager.
@@ -64,7 +64,7 @@ func DefaultConfig() Config {
 
 // Manager implements a simple gossip-based membership protocol.
 type Manager struct {
-	self  chord.RemoteNode
+	self  overlay.RemoteNode
 	cfg   Config
 	rnd   *rand.Rand
 	http  *http.Client
@@ -73,7 +73,7 @@ type Manager struct {
 }
 
 // NewManager constructs membership manager.
-func NewManager(self chord.RemoteNode, cfg Config) *Manager {
+func NewManager(self overlay.RemoteNode, cfg Config) *Manager {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -88,9 +88,9 @@ func NewManager(self chord.RemoteNode, cfg Config) *Manager {
 		}).DialContext,
 	}
 	return &Manager{
-		self:  self,
-		cfg:   cfg,
-		rnd:   rand.New(rand.NewSource(time.Now().UnixNano())),
+		self: self,
+		cfg:  cfg,
+		rnd:  rand.New(rand.NewSource(time.Now().UnixNano())),
 		http: &http.Client{
 			Timeout:   cfg.HTTPTimeout,
 			Transport: transport,
@@ -267,13 +267,13 @@ func (m *Manager) Members() []*Member {
 }
 
 // AliveMembers returns addresses of nodes considered alive.
-func (m *Manager) AliveMembers() []chord.RemoteNode {
+func (m *Manager) AliveMembers() []overlay.RemoteNode {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := make([]chord.RemoteNode, 0, len(m.state))
+	out := make([]overlay.RemoteNode, 0, len(m.state))
 	for _, member := range m.state {
 		if member.State == StateAlive {
-			out = append(out, chord.RemoteNode{ID: member.ID, Address: member.Address})
+			out = append(out, overlay.RemoteNode{ID: member.ID, Address: member.Address})
 		}
 	}
 	return out
@@ -316,7 +316,7 @@ func (m *Manager) HandlePing(w http.ResponseWriter, r *http.Request) {
 }
 
 // MarkAlive marks a member as alive (used on join acknowledgement).
-func (m *Manager) MarkAlive(node chord.RemoteNode) {
+func (m *Manager) MarkAlive(node overlay.RemoteNode) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
@@ -327,4 +327,3 @@ func (m *Manager) MarkAlive(node chord.RemoteNode) {
 		UpdatedAt: now,
 	}
 }
-

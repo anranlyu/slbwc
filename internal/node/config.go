@@ -11,6 +11,8 @@ var (
 	ErrInvalidAddress = errors.New("node: address must be set")
 	// ErrInvalidMode indicates invalid routing mode.
 	ErrInvalidMode = errors.New("node: invalid mode")
+	// ErrInvalidOverlay indicates unsupported overlay type.
+	ErrInvalidOverlay = errors.New("node: invalid overlay")
 )
 
 // Mode defines forwarding behaviour.
@@ -23,12 +25,23 @@ const (
 	RedirectMode Mode = "redirect"
 )
 
+// Overlay identifies overlay algorithm.
+type Overlay string
+
+const (
+	// OverlayChord selects the Chord overlay.
+	OverlayChord Overlay = "chord"
+	// OverlayKoorde selects the Koorde overlay.
+	OverlayKoorde Overlay = "koorde"
+)
+
 // Config contains runtime configuration for a node instance.
 type Config struct {
 	ID                 string
 	Address            string
 	BindAddr           string
 	Seeds              []string
+	Overlay            Overlay
 	Mode               Mode
 	ReplicationFactor  int
 	CacheCapacity      int
@@ -57,6 +70,14 @@ func (c *Config) Validate() error {
 	if c.OriginTimeout <= 0 {
 		c.OriginTimeout = 10 * time.Second
 	}
+	if c.Overlay == "" {
+		c.Overlay = OverlayChord
+	}
+	switch c.Overlay {
+	case OverlayChord, OverlayKoorde:
+	default:
+		return fmt.Errorf("%w: %s", ErrInvalidOverlay, c.Overlay)
+	}
 	if c.Mode == "" {
 		c.Mode = ProxyMode
 	}
@@ -67,4 +88,3 @@ func (c *Config) Validate() error {
 	}
 	return nil
 }
-

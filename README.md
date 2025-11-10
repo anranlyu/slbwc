@@ -1,10 +1,10 @@
 # slbwc – Serverless-Like Browser Web Cache
 
-`slbwc` is a Go implementation of a peer-to-peer web cache. Each instance joins a Chord-based distributed hash table, exposes cache operations over HTTP, gossips membership for liveness, replicates cached objects, and exports Prometheus metrics.
+`slbwc` is a Go implementation of a peer-to-peer web cache. Each instance joins a Chord or Koorde distributed hash table, exposes cache operations over HTTP, gossips membership for liveness, replicates cached objects, and exports Prometheus metrics.
 
 ## Features
 
-- **Overlay network** – Chord routing with stabilization, finger repair, and successor lists.
+- **Overlay network** – Pluggable Chord or Koorde routing with stabilization, successor maintenance, and de Bruijn pointers.
 - **Membership gossip** – SWIM-inspired gossip/cleanup to track healthy peers.
 - **Distributed cache** – In-memory TTL-aware LRU with background cleanup and replication.
 - **HTTP API** – `GET`/`HEAD /cache?url=...`, optional proxy or redirect behaviour.
@@ -37,37 +37,50 @@ go build ./...
 The entrypoint lives in `cmd/node`. Run it directly:
 
 ```powershell
-go run ./cmd/node \
+go run ./cmd/node `
   --address 127.0.0.1:8080 `
   --cache-capacity 512 `
   --default-ttl 5m
 ```
 
+> PowerShell treats the backtick (`) as a line-continuation character. Make sure it is the last character on each continued line (no trailing spaces), or run the command on a single line instead.
+
+To experiment with the Koorde overlay instead of Chord:
+
+```powershell
+go run ./cmd/node `
+  --overlay koorde `
+  --address 127.0.0.1:8080
+```
+
 Flags (all optional):
 
-| Flag | Description | Default |
-| --- | --- | --- |
-| `--address` | Address advertised to the cluster (`host:port`). Also used as bind address unless `--bind` supplied. | `127.0.0.1:8080` |
-| `--bind` | HTTP listen address (useful when advertising via external IP). | Uses `--address` |
-| `--id` | Stable seed for hashing. Defaults to `--address`. | |
-| `--mode` | Cache routing mode: `proxy` or `redirect`. | `proxy` |
-| `--replicas` | Number of replicas (successors) to store content. | `3` |
-| `--cache-capacity` | Entry capacity of local LRU cache. | `512` |
-| `--default-ttl` | TTL applied when origin omits caching headers. | `5m` |
-| `--cache-janitor-period` | Expired entry cleanup interval. | `30s` |
-| `--origin-timeout` | Timeout for origin fetches and intra-cluster calls. | `10s` |
-| `--seed` | Seed node address. Supply multiple times for redundancy. | (none) |
+| Flag                     | Description                                                                                          | Default          |
+| ------------------------ | ---------------------------------------------------------------------------------------------------- | ---------------- |
+| `--address`              | Address advertised to the cluster (`host:port`). Also used as bind address unless `--bind` supplied. | `127.0.0.1:8080` |
+| `--bind`                 | HTTP listen address (useful when advertising via external IP).                                       | Uses `--address` |
+| `--id`                   | Stable seed for hashing. Defaults to `--address`.                                                    |                  |
+| `--overlay`              | Overlay algorithm: `chord` or `koorde`.                                                              | `chord`          |
+| `--mode`                 | Cache routing mode: `proxy` or `redirect`.                                                           | `proxy`          |
+| `--replicas`             | Number of replicas (successors) to store content.                                                    | `3`              |
+| `--cache-capacity`       | Entry capacity of local LRU cache.                                                                   | `512`            |
+| `--default-ttl`          | TTL applied when origin omits caching headers.                                                       | `5m`             |
+| `--cache-janitor-period` | Expired entry cleanup interval.                                                                      | `30s`            |
+| `--origin-timeout`       | Timeout for origin fetches and intra-cluster calls.                                                  | `10s`            |
+| `--seed`                 | Seed node address. Supply multiple times for redundancy.                                             | (none)           |
 
 The process logs to stdout in JSON. `/healthz` returns `204` when ready.
 
 ## Forming a Cluster
 
 1. Start the first node without seeds (it will create a new ring):
+
    ```powershell
    go run ./cmd/node --address 127.0.0.1:8080
    ```
 
 2. Start additional nodes pointing at the first:
+
    ```powershell
    go run ./cmd/node `
      --address 127.0.0.1:8081 `
@@ -80,6 +93,8 @@ The process logs to stdout in JSON. `/healthz` returns `204` when ready.
    ```
 
 Nodes join the ring, pull successor lists, and gossip membership. Logs include join success/failure events.
+
+> Ensure every node in the cluster is started with the same `--overlay` selection so they speak the same routing protocol.
 
 ## Issuing Requests
 
@@ -113,7 +128,8 @@ scrape_configs:
 
 - Run tests / build: `go test ./...`, `go build ./...`
 - Use `go run ./cmd/node --help` to view flag usage.
-- For debugging overlay state, hit the internal endpoints (e.g. `GET /internal/chord/successor`), bearing in mind they are not authenticated.
+- For debugging overlay state, hit the internal endpoints (e.g. `GET /internal/chord/successor` or `GET /internal/koorde/successor`), bearing in mind they are not authenticated.
+- To launch a local mini-cluster quickly, use `scripts\start-nodes.ps1` (builds the binary, starts multiple processes, and stops them on Enter) and validate behaviour via `scripts\test-nodes.ps1`.
 
 ## Repository Layout
 
@@ -121,6 +137,8 @@ scrape_configs:
 cmd/node          Node executable entrypoint
 internal/cache    TTL-aware LRU implementation
 internal/chord    Chord overlay logic & HTTP RPCs
+internal/koorde   Koorde overlay (de Bruijn pointers)
+internal/overlay  Shared overlay identifiers & interfaces
 internal/membership  Gossip-based membership
 internal/metrics  Prometheus collectors
 prompt.md         Original requirements overview
@@ -129,4 +147,3 @@ prompt.md         Original requirements overview
 ## License
 
 MIT (adjust if your project uses a different license).
-
