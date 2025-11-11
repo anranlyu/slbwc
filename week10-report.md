@@ -7,9 +7,8 @@ Our ultimate goal is to build a scalable, distributed web-cache platform that ca
 **Next steps.** Finish the simple-hash baseline, package the node into a deployable artifact, and stand up a small AWS deployment (e.g., EC2 or ECS). After that we will run controlled load tests to capture latency distributions, hop counts, hit ratios, and replication overhead for each overlay.
 
 **Team contribution**
-Anran Lyu: Implemented code, understood Chord, and taught Yuzheng Shi.
-Yuzheng Shi: Implemented code, understood Koorde, and taught Anran Lyu
-
+Anran Lyu: Implemented code, understood Chord
+Yuzheng Shi: Implemented code, understood Koorde
 ## Related Work
 
 Our research is grounded in two fundamental papers:
